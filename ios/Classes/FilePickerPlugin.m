@@ -191,13 +191,143 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls{
 // AudioPicker delegate
 - (void)mediaPicker: (MPMediaPickerController *)mediaPicker didPickMediaItems:(MPMediaItemCollection *)mediaItemCollection
 {
+    Log(@"Debug Media Picker8");
     [mediaPicker dismissViewControllerAnimated:YES completion:NULL];
-    NSURL *url = [[[mediaItemCollection items] objectAtIndex:0] valueForKey:MPMediaItemPropertyAssetURL];
-    if(url == nil) {
+    MPMediaItem *mediaItem = [[mediaItemCollection items] objectAtIndex:0];
+    //get the name of the file.
+    NSString *songTitle = [mediaItem valueForProperty: MPMediaItemPropertyTitle];
+    
+    //convert MPMediaItem to AVURLAsset.
+    AVURLAsset *sset = [AVURLAsset assetWithURL:[mediaItem valueForProperty:MPMediaItemPropertyAssetURL]];
+    
+    if(sset == nil) {
         Log(@"Couldn't retrieve the audio file path, either is not locally downloaded or the file is DRM protected.");
+        _result(nil);
+        _result = nil;
+        return;
     }
-     _result([url absoluteString]);
-     _result = nil;
+    
+    //get the extension of the file.
+    NSString *fileType = [[[[sset.URL absoluteString] componentsSeparatedByString:@"?"] objectAtIndex:0] pathExtension];
+    
+    //init export, here you must set "presentName" argument to "AVAssetExportPresetPassthrough". If not, you will can't export mp3 correct.
+    AVAssetExportSession *export = [[AVAssetExportSession alloc] initWithAsset:sset presetName:AVAssetExportPresetPassthrough];
+    
+    NSLog(@"export.supportedFileTypes : %@",export.supportedFileTypes);
+    //export to mov format.
+    export.outputFileType = @"com.apple.quicktime-movie";
+    
+    export.shouldOptimizeForNetworkUse = YES;
+    
+    NSString *extension = (__bridge NSString *)UTTypeCopyPreferredTagWithClass((__bridge CFStringRef)export.outputFileType, kUTTagClassFilenameExtension);
+    
+    NSLog(@"extension %@",extension);
+    NSString *path = [NSHomeDirectory() stringByAppendingFormat:@"/Documents/%@.%@",songTitle,extension];
+    
+    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    
+    NSURL *outputURL = [NSURL fileURLWithPath:path];
+    export.outputURL = outputURL;
+    [export exportAsynchronouslyWithCompletionHandler:^{
+        
+        if (export.status == AVAssetExportSessionStatusCompleted)
+        {
+                        Log(@"Success");
+            NSURL* saveDirectory = [outputURL URLByDeletingLastPathComponent];
+            Log(@"saveDirectory: %@", [saveDirectory absoluteString]);
+                        NSArray* dirs = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:[ saveDirectory absoluteString]
+                            error:NULL];
+            Log(@"fileCount: %d", [dirs count]);
+                        [dirs enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
+                            NSString *filename = (NSString *)obj;
+                            Log(@"file: %@", filename);
+                        }];
+            //then rename mov format to the original format.
+            NSFileManager *manage = [NSFileManager defaultManager];
+            NSString *mp3Path = [NSHomeDirectory() stringByAppendingFormat:@"/Documents/%@.%@",songTitle,fileType];
+            
+            NSError *error = nil;
+            
+            [[NSFileManager defaultManager] removeItemAtPath:mp3Path error:nil];
+            [manage moveItemAtPath:path toPath:mp3Path error:&error];
+            
+            Log(@"error %@",error);
+            
+            _result(mp3Path);
+            _result = nil;
+            
+        }
+        else
+        {
+            NSLog(@"%@",export.error);
+            _result(nil);
+            _result = nil;
+        }
+        
+    }];
+//    NSURL *assetURL = mediaItem.assetURL;
+//    NSFileManager *fileManager = [NSFileManager defaultManager];
+//    NSURL *documentURL = [fileManager URLForDirectory:NSDocumentDirectory inDomain:NSUserDomainMask appropriateForURL:nil create:true error:nil];
+//    Log(@"assetURL: %@", [assetURL absoluteString]);
+//    Log(@"documentURL: %@", [documentURL absoluteString]);
+//
+//    NSString * extension = @"mov";//[assetURL pathExtension];
+//    Log(@"extension: %@", extension);
+//
+//    NSURL *tempURL = [ documentURL URLByAppendingPathComponent:@"temp" isDirectory:true ];
+//    Log(@"tempURL: %@", [tempURL absoluteString]);
+//
+//    NSURL *fileURL = [ tempURL URLByAppendingPathComponent:@"export" ];
+//    fileURL = [ fileURL URLByAppendingPathExtension:extension ];
+//    Log(@"fileURL: %@", [fileURL absoluteString]);
+//
+//    AVAsset *asset = [AVAsset assetWithURL:fileURL];
+//    //AVAssetExportSession *exportSession = [AVAssetExportSession exportSessionWithAsset:asset];
+//    AVAssetExportSession *exportSession
+//    = [AVAssetExportSession exportSessionWithAsset:asset presetName:AVAssetExportPresetPassthrough];
+//    Log(@"exportSession.supportedFileTypes : %@",exportSession.supportedFileTypes);
+//    exportSession.shouldOptimizeForNetworkUse = YES;
+//    exportSession.outputFileType = @"com.apple.quicktime-movie";
+////    exportSession.metadata = asset.commonMetadata;
+//    NSURL *exportURL = [[[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:@"export"] URLByAppendingPathExtension:@"mov"];
+//
+//    exportSession.outputURL = exportURL;
+////    exportSession.outputURL = fileURL;
+//
+//    Log(@"processing asset...: %@", exportSession);
+//    [exportSession exportAsynchronouslyWithCompletionHandler:^{
+//        if (exportSession.status == AVAssetExportSessionStatusCompleted)
+//        {
+//            Log(@"Success");
+//            NSArray* dirs = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:[tempURL absoluteString]
+//                                                                                error:NULL];
+//            NSMutableArray *mp3Files = [[NSMutableArray alloc] init];
+//            [dirs enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
+//                NSString *filename = (NSString *)obj;
+//                NSString *extension = [[filename pathExtension] lowercaseString];
+//                Log(@"file: %@", filename);
+////                if ([extension isEqualToString:@"mp3"]) {
+////                    [mp3Files addObject:[sourcePath stringByAppendingPathComponent:filename]];
+////                }
+//            }];
+//            //then rename mov format to the original format.
+////            NSFileManager *manage = [NSFileManager defaultManager];
+////
+////            NSString *mp3Path = [NSHomeDirectory() stringByAppendingFormat:@"/Documents/%@.%@",songTitle,fileType];
+////
+////            NSError *error = nil;
+////
+////            [manage moveItemAtPath:path toPath:mp3Path error:&error];
+////
+////            NSLog(@"error %@",error);
+//
+//        }
+//        else
+//        {
+//            Log(@"%@",exportSession.error);
+//        }
+//    }];
+//
 }
 
 #pragma mark - Actions canceled
