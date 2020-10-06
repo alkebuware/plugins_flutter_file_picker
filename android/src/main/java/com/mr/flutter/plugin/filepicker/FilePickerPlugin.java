@@ -1,203 +1,331 @@
 package com.mr.flutter.plugin.filepicker;
 
-import android.Manifest;
 import android.app.Activity;
-import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.net.Uri;
-import android.os.Build;
-import android.os.Environment;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-import android.util.Log;
-import android.webkit.MimeTypeMap;
+import android.app.Application;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 
+import androidx.annotation.NonNull;
+import androidx.lifecycle.DefaultLifecycleObserver;
+import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleOwner;
 
-import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 
-
+import io.flutter.embedding.engine.plugins.FlutterPlugin;
+import io.flutter.embedding.engine.plugins.activity.ActivityAware;
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
+import io.flutter.embedding.engine.plugins.lifecycle.FlutterLifecycleAdapter;
+import io.flutter.plugin.common.BinaryMessenger;
+import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
-import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
-import io.flutter.plugin.common.MethodChannel.Result;
 import io.flutter.plugin.common.PluginRegistry;
 import io.flutter.plugin.common.PluginRegistry.Registrar;
 
-/** FilePickerPlugin */
-public class FilePickerPlugin implements MethodCallHandler {
+/**
+ * FilePickerPlugin
+ */
+public class FilePickerPlugin implements MethodChannel.MethodCallHandler, FlutterPlugin, ActivityAware {
 
-  private static final int REQUEST_CODE = (FilePickerPlugin.class.hashCode() + 43) & 0x0000ffff;
-  private static final int PERM_CODE = (FilePickerPlugin.class.hashCode() + 50) & 0x0000ffff;
-  private static final String TAG = "FilePicker";
-  private static final String permission = Manifest.permission.READ_EXTERNAL_STORAGE;
+    private static final String TAG = "FilePicker";
+    private static final String CHANNEL = "miguelruivo.flutter.plugins.filepicker";
+    private static final String EVENT_CHANNEL = "miguelruivo.flutter.plugins.filepickerevent";
 
-  private static Result result;
-  private static Registrar instance;
-  private static String fileType;
-  private static boolean isMultipleSelection = false;
+    private class LifeCycleObserver
+            implements Application.ActivityLifecycleCallbacks, DefaultLifecycleObserver {
+        private final Activity thisActivity;
 
-  /** Plugin registration. */
-  public static void registerWith(Registrar registrar) {
-
-    if (registrar.activity() == null) {
-        // If a background flutter view tries to register the plugin, there will be no activity from the registrar,
-        // we stop the registering process immediately because the ImagePicker requires an activity.
-        return;
-    }
-
-    final MethodChannel channel = new MethodChannel(registrar.messenger(), "file_picker");
-    channel.setMethodCallHandler(new FilePickerPlugin());
-
-    instance = registrar;
-    instance.addActivityResultListener(new PluginRegistry.ActivityResultListener() {
-      @Override
-      public boolean onActivityResult(int requestCode, int resultCode, Intent data) {
-
-        if (requestCode == REQUEST_CODE && resultCode == Activity.RESULT_OK) {
-
-          if(data.getClipData() != null) {
-            int count = data.getClipData().getItemCount();
-            int currentItem = 0;
-            ArrayList<String> paths = new ArrayList<>();
-            while(currentItem < count) {
-              final Uri currentUri = data.getClipData().getItemAt(currentItem).getUri();
-              String path = FileUtils.getPath(currentUri, instance.context());
-              if(path == null) {
-                path =  FileUtils.getUriFromRemote(instance.activeContext(), currentUri, result);
-              }
-              paths.add(path);
-              Log.i(TAG, "[MultiFilePick] File #" + currentItem + " - URI: " +currentUri.getPath());
-              currentItem++;
-            }
-            if(paths.size() > 1){
-              result.success(paths);
-            } else {
-              result.success(paths.get(0));
-            }
-          } else if (data != null) {
-            Uri uri = data.getData();
-            Log.i(TAG, "[SingleFilePick] File URI:" +data.getData().toString());
-            String fullPath = FileUtils.getPath(uri, instance.context());
-
-            if(fullPath == null) {
-             fullPath =  FileUtils.getUriFromRemote(instance.activeContext(), uri, result);
-            }
-
-            if(fullPath != null) {
-              Log.i(TAG, "Absolute file path:" + fullPath);
-              result.success(fullPath);
-            } else {
-              result.error(TAG, "Failed to retrieve path." ,null);
-            }
-          }
-          return true;
-        } else if(requestCode == REQUEST_CODE && resultCode == Activity.RESULT_CANCELED) {
-            result.success(null);
-            return true;
-        } else if (requestCode == REQUEST_CODE) {
-          result.error(TAG, "Unknown activity error, please fill an issue." ,null);
+        LifeCycleObserver(final Activity activity) {
+            this.thisActivity = activity;
         }
-        return false;
-      }
-    });
 
-    instance.addRequestPermissionsResultListener(new PluginRegistry.RequestPermissionsResultListener() {
-      @Override
-      public boolean onRequestPermissionsResult(int requestCode, String[] strings, int[] grantResults) {
-        if (requestCode == PERM_CODE && grantResults.length > 0
-                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-          startFileExplorer(fileType);
-          return true;
+        @Override
+        public void onCreate(@NonNull final LifecycleOwner owner) {
         }
-        return false;
-      }
-    });
-  }
 
-  @Override
-  public void onMethodCall(MethodCall call, Result result) {
-    this.result = result;
-    fileType = resolveType(call.method);
-    isMultipleSelection = (boolean)call.arguments;
+        @Override
+        public void onStart(@NonNull final LifecycleOwner owner) {
+        }
 
-    if(fileType == null) {
-      result.notImplemented();
-    } else if(fileType.equals("unsupported")) {
-      result.error(TAG, "Unsupported filter. Make sure that you are only using the extension without the dot, (ie., jpg instead of .jpg). This could also have happened because you are using an unsupported file extension.  If the problem persists, you may want to consider using FileType.ALL instead." ,null);
-    } else {
-      startFileExplorer(fileType);
+        @Override
+        public void onResume(@NonNull final LifecycleOwner owner) {
+        }
+
+        @Override
+        public void onPause(@NonNull final LifecycleOwner owner) {
+        }
+
+        @Override
+        public void onStop(@NonNull final LifecycleOwner owner) {
+            this.onActivityStopped(this.thisActivity);
+        }
+
+        @Override
+        public void onDestroy(@NonNull final LifecycleOwner owner) {
+            this.onActivityDestroyed(this.thisActivity);
+        }
+
+        @Override
+        public void onActivityCreated(final Activity activity, final Bundle savedInstanceState) {
+        }
+
+        @Override
+        public void onActivityStarted(final Activity activity) {
+        }
+
+        @Override
+        public void onActivityResumed(final Activity activity) {
+        }
+
+        @Override
+        public void onActivityPaused(final Activity activity) {
+        }
+
+        @Override
+        public void onActivitySaveInstanceState(final Activity activity, final Bundle outState) {
+        }
+
+        @Override
+        public void onActivityDestroyed(final Activity activity) {
+            if (this.thisActivity == activity && activity.getApplicationContext() != null) {
+                ((Application) activity.getApplicationContext()).unregisterActivityLifecycleCallbacks(this); // Use getApplicationContext() to avoid casting failures
+            }
+        }
+
+        @Override
+        public void onActivityStopped(final Activity activity) {
+        }
     }
 
-  }
+    private ActivityPluginBinding activityBinding;
+    private FilePickerDelegate delegate;
+    private Application application;
+    private FlutterPluginBinding pluginBinding;
 
-  private static boolean checkPermission() {
-    Activity activity = instance.activity();
-    Log.i(TAG, "Checking permission: " + permission);
-    return PackageManager.PERMISSION_GRANTED == ContextCompat.checkSelfPermission(activity, permission);
-  }
+    // This is null when not using v2 embedding;
+    private Lifecycle lifecycle;
+    private LifeCycleObserver observer;
+    private Activity activity;
+    private MethodChannel channel;
+    private static String fileType;
+    private static boolean isMultipleSelection = false;
+    private static boolean withData = false;
 
-  private static void requestPermission() {
-    Activity activity = instance.activity();
-    Log.i(TAG, "Requesting permission: " + permission);
-    String[] perm = { permission };
-    ActivityCompat.requestPermissions(activity, perm, PERM_CODE);
-  }
+    /**
+     * Plugin registration.
+     */
+    public static void registerWith(final Registrar registrar) {
 
-  private String resolveType(String type) {
+        if (registrar.activity() == null) {
+            // If a background flutter view tries to register the plugin, there will be no activity from the registrar,
+            // we stop the registering process immediately because the ImagePicker requires an activity.
+            return;
+        }
 
-    final boolean isCustom = type.contains("__CUSTOM_");
+        final Activity activity = registrar.activity();
+        Application application = null;
+        if (registrar.context() != null) {
+            application = (Application) (registrar.context().getApplicationContext());
+        }
 
-    if(isCustom) {
-      final String extension = type.split("__CUSTOM_")[1].toLowerCase();
-      String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
-      mime = mime == null ? "unsupported" : mime;
-      Log.i(TAG, "Custom file type: " + mime);
-      return mime;
+        final FilePickerPlugin plugin = new FilePickerPlugin();
+        plugin.setup(registrar.messenger(), application, activity, registrar, null);
+
     }
 
-    switch (type) {
-      case "AUDIO":
-        return "audio/*";
-      case "IMAGE":
-        return "image/*";
-      case "VIDEO":
-        return "video/*";
-      case "ANY":
-        return "*/*";
-      default:
-        return null;
-    }
-  }
 
+    @SuppressWarnings("unchecked")
+    @Override
+    public void onMethodCall(final MethodCall call, final MethodChannel.Result rawResult) {
 
+        if (this.activity == null) {
+            rawResult.error("no_activity", "file picker plugin requires a foreground activity", null);
+            return;
+        }
 
+        final MethodChannel.Result result = new MethodResultWrapper(rawResult);
+        final HashMap arguments = (HashMap) call.arguments;
 
-  private static void startFileExplorer(String type) {
-    Intent intent;
+        if (call.method != null && call.method.equals("clear")) {
+            result.success(FileUtils.clearCache(activity.getApplicationContext()));
+            return;
+        }
 
-    if (checkPermission()) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT) {
-            intent = new Intent(Intent.ACTION_PICK);
+        fileType = FilePickerPlugin.resolveType(call.method);
+        String[] allowedExtensions = null;
+
+        if (fileType == null) {
+            result.notImplemented();
+        } else if (fileType != "dir") {
+            isMultipleSelection = (boolean) arguments.get("allowMultipleSelection");
+            withData = (boolean) arguments.get("withData");
+            allowedExtensions = FileUtils.getMimeTypes((ArrayList<String>) arguments.get("allowedExtensions"));
+        }
+
+        if (fileType == "custom" && (allowedExtensions == null || allowedExtensions.length == 0)) {
+            result.error(TAG, "Unsupported filter. Make sure that you are only using the extension without the dot, (ie., jpg instead of .jpg). This could also have happened because you are using an unsupported file extension.  If the problem persists, you may want to consider using FileType.all instead.", null);
         } else {
-            intent = new Intent(Intent.ACTION_GET_CONTENT);
+            this.delegate.startFileExplorer(fileType, isMultipleSelection, withData, allowedExtensions, result);
         }
 
-        Uri uri = Uri.parse(Environment.getExternalStorageDirectory().getPath() + File.separator);
-        intent.setDataAndType(uri, type);
-        intent.setType(type);
-        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, isMultipleSelection);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-
-        if (intent.resolveActivity(instance.activity().getPackageManager()) != null) {
-            instance.activity().startActivityForResult(intent, REQUEST_CODE);
-        } else {
-            Log.e(TAG, "Can't find a valid activity to handle the request. Make sure you've a file explorer installed.");
-            result.error(TAG, "Can't handle the provided file type.", null);
-        }
-    } else {
-        requestPermission();
     }
-  }
 
+    private static String resolveType(final String type) {
+
+        switch (type) {
+            case "audio":
+                return "audio/*";
+            case "image":
+                return "image/*";
+            case "video":
+                return "video/*";
+            case "media":
+                return "image/*,video/*";
+            case "any":
+            case "custom":
+                return "*/*";
+            case "dir":
+                return "dir";
+            default:
+                return null;
+        }
+    }
+
+
+    // MethodChannel.Result wrapper that responds on the platform thread.
+    private static class MethodResultWrapper implements MethodChannel.Result {
+        private final MethodChannel.Result methodResult;
+        private final Handler handler;
+
+        MethodResultWrapper(final MethodChannel.Result result) {
+            this.methodResult = result;
+            this.handler = new Handler(Looper.getMainLooper());
+        }
+
+        @Override
+        public void success(final Object result) {
+            this.handler.post(
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            MethodResultWrapper.this.methodResult.success(result);
+                        }
+                    });
+        }
+
+        @Override
+        public void error(
+                final String errorCode, final String errorMessage, final Object errorDetails) {
+            this.handler.post(
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            MethodResultWrapper.this.methodResult.error(errorCode, errorMessage, errorDetails);
+                        }
+                    });
+        }
+
+        @Override
+        public void notImplemented() {
+            this.handler.post(
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            MethodResultWrapper.this.methodResult.notImplemented();
+                        }
+                    });
+        }
+    }
+
+
+    private void setup(
+            final BinaryMessenger messenger,
+            final Application application,
+            final Activity activity,
+            final PluginRegistry.Registrar registrar,
+            final ActivityPluginBinding activityBinding) {
+
+        this.activity = activity;
+        this.application = application;
+        this.delegate = new FilePickerDelegate(activity);
+        this.channel = new MethodChannel(messenger, CHANNEL);
+        this.channel.setMethodCallHandler(this);
+        new EventChannel(messenger, EVENT_CHANNEL).setStreamHandler(new EventChannel.StreamHandler() {
+            @Override
+            public void onListen(final Object arguments, final EventChannel.EventSink events) {
+                delegate.setEventHandler(events);
+            }
+
+            @Override
+            public void onCancel(final Object arguments) {
+                delegate.setEventHandler(null);
+            }
+        });
+        this.observer = new LifeCycleObserver(activity);
+        if (registrar != null) {
+            // V1 embedding setup for activity listeners.
+            application.registerActivityLifecycleCallbacks(this.observer);
+            registrar.addActivityResultListener(this.delegate);
+            registrar.addRequestPermissionsResultListener(this.delegate);
+        } else {
+            // V2 embedding setup for activity listeners.
+            activityBinding.addActivityResultListener(this.delegate);
+            activityBinding.addRequestPermissionsResultListener(this.delegate);
+            this.lifecycle = FlutterLifecycleAdapter.getActivityLifecycle(activityBinding);
+            this.lifecycle.addObserver(this.observer);
+        }
+    }
+
+    private void tearDown() {
+        this.activityBinding.removeActivityResultListener(this.delegate);
+        this.activityBinding.removeRequestPermissionsResultListener(this.delegate);
+        this.activityBinding = null;
+        this.lifecycle.removeObserver(this.observer);
+        this.lifecycle = null;
+        this.delegate.setEventHandler(null);
+        this.delegate = null;
+        this.channel.setMethodCallHandler(null);
+        this.channel = null;
+        this.application.unregisterActivityLifecycleCallbacks(this.observer);
+        this.application = null;
+    }
+
+    @Override
+    public void onAttachedToEngine(final FlutterPluginBinding binding) {
+        this.pluginBinding = binding;
+    }
+
+    @Override
+    public void onDetachedFromEngine(final FlutterPluginBinding binding) {
+        this.pluginBinding = null;
+    }
+
+    @Override
+    public void onAttachedToActivity(final ActivityPluginBinding binding) {
+        this.activityBinding = binding;
+        this.setup(
+                this.pluginBinding.getBinaryMessenger(),
+                (Application) this.pluginBinding.getApplicationContext(),
+                this.activityBinding.getActivity(),
+                null,
+                this.activityBinding);
+    }
+
+    @Override
+    public void onDetachedFromActivityForConfigChanges() {
+        this.onDetachedFromActivity();
+    }
+
+    @Override
+    public void onReattachedToActivityForConfigChanges(final ActivityPluginBinding binding) {
+        this.onAttachedToActivity(binding);
+    }
+
+    @Override
+    public void onDetachedFromActivity() {
+        this.tearDown();
+    }
 }
